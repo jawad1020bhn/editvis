@@ -151,7 +151,10 @@
   const state = { players: [], sort: 'overall', direction: -1, filename: '', shortlist:new Set(savedShortlist.map(String)), compare:new Set(), notes:new Map(Object.entries(savedNotes)), priorities:new Map(Object.entries(savedPriorities)), quick:'all', limit:100 };
   let bundledSaveBuffer = null;
   let bundledSchemaText = null;
+  let activeSchemaName = 'fifa_ng_db-meta.xml';
   let bundledNameLookup = new Map();
+  let activeDatabaseBuffer = null;
+  let activeDatabaseName = '';
   let activeCareerDate = null;
   let activeNationLookup = new Map();
   let lastOverlayFocus = null;
@@ -338,15 +341,35 @@
   function closeOverlay(overlay){if(typeof overlay==='string')overlay=$(overlay);if(!overlay||overlay.classList.contains('hidden'))return;overlay.classList.add('hidden');if(overlay.id==='commandPalette')$('commandBtn').setAttribute('aria-expanded','false');if(lastOverlayFocus?.isConnected)lastOverlayFocus.focus();lastOverlayFocus=null;}
   function switchView(view){const settings=view==='settings';$('scoutView').classList.toggle('hidden',settings);$('settingsView').classList.toggle('hidden',!settings);$('settingsNav').classList.toggle('active',settings);$('settingsNav').setAttribute('aria-current',settings?'page':'false');document.querySelectorAll('.header-nav [data-quick]').forEach(button=>{const active=!settings&&(state.quick==='shortlist'?button.dataset.quick==='shortlist':button.dataset.quick==='all');button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));});if(!settings)updateScoutControls();window.scrollTo?.({top:0,behavior:'smooth'});}
   function displaySavedAssetNames(assets){$('settingsSaveName').textContent=assets?.saveName||'No file selected';$('settingsSchemaName').textContent=assets?.schemaName||'No file selected';$('settingsDbName').textContent=assets?.dbName||'No file selected';}
+  function parsePlayerExport(text,format){
+    let parsed;if(format==='csv')parsed=parseCSV(text);else{parsed=JSON.parse(text);if(!Array.isArray(parsed))parsed=parsed.players||parsed.data||parsed.rows||parsed.records;}
+    if(!Array.isArray(parsed))throw new Error('JSON must contain an array of players.');if(!parsed.length)throw new Error('The file contains no players.');return parsed;
+  }
+  async function rememberSuccessfulImport(assets){
+    try{await writeAssetSet(assets);setSettingsMessage(`Import saved in this browser and will be restored automatically.`);}
+    catch(error){setNotice(`Data loaded, but this browser could not remember the import: ${error.message}`);}
+  }
+  async function rememberCareerImport(saveBuffer,saveName,schemaText,schemaName,dbBuffer,dbName){
+    const assets={kind:'career-import',saveBuffer,saveName,schemaText,schemaName,dbBuffer:dbBuffer||null,dbName:dbBuffer?(dbName||'FIFA reference database'):''};
+    await rememberSuccessfulImport(assets);displaySavedAssetNames(assets);
+  }
+  async function applyRememberedImport(assets){
+    if(assets.kind==='player-export'){const rows=parsePlayerExport(assets.content,assets.format);loadRows(rows,assets.fileName||'Imported players');$('footerInfo').textContent=`${rows.length.toLocaleString()} players loaded from ${assets.fileName||'saved import'} · stored in this browser`;$('topStatus').textContent='Saved import restored';return;}
+    if(assets.kind!=='career-import'||!assets.saveBuffer||!assets.schemaText)throw new Error('The saved import is incomplete. Choose the files again in Import Data.');
+    const lookup=assets.dbBuffer?parseCareerSave(assets.dbBuffer,assets.schemaText,assets.dbName||'FIFA reference database').nameLookup:new Map();
+    const rows=parseCareerSave(assets.saveBuffer,assets.schemaText,assets.saveName||'Career save',lookup);
+    bundledSaveBuffer=assets.saveBuffer;bundledSchemaText=assets.schemaText;activeSchemaName=assets.schemaName||'fifa_ng_db-meta.xml';bundledNameLookup=lookup;activeDatabaseBuffer=assets.dbBuffer||null;activeDatabaseName=assets.dbName||'';activeSaveName=assets.saveName||'Career save';
+    loadRows(rows,activeSaveName);$('footerInfo').textContent=`${rows.length.toLocaleString()} players decoded from ${activeSaveName}${assets.dbName?' · names resolved from '+assets.dbName:''} · restored from this browser`;$('topStatus').textContent='Saved import restored';displaySavedAssetNames({saveName:assets.saveName,schemaName:assets.schemaName,dbName:assets.dbName});
+  }
   async function applyAssetSet(assets){
     if(!assets?.saveBuffer||!assets?.schemaText||!assets?.dbBuffer)throw new Error('The saved file set is incomplete. Choose a career save, its matching XML schema, and the FIFA reference database.');
     const lookup=parseCareerSave(assets.dbBuffer,assets.schemaText,assets.dbName||'fifa_ng_db.db').nameLookup;
     const rows=parseCareerSave(assets.saveBuffer,assets.schemaText,assets.saveName||'Career save',lookup);
-    bundledSaveBuffer=assets.saveBuffer;bundledSchemaText=assets.schemaText;bundledNameLookup=lookup;activeSaveName=assets.saveName||'Career save';
+    bundledSaveBuffer=assets.saveBuffer;bundledSchemaText=assets.schemaText;activeSchemaName=assets.schemaName||'fifa_ng_db-meta.xml';bundledNameLookup=lookup;activeDatabaseBuffer=assets.dbBuffer;activeDatabaseName=assets.dbName||'fifa_ng_db.db';activeSaveName=assets.saveName||'Career save';
     loadRows(rows,activeSaveName);$('footerInfo').textContent=`${rows.length.toLocaleString()} players decoded · names resolved from ${assets.dbName||'reference database'}`;$('topStatus').textContent='Custom files loaded';displaySavedAssetNames(assets);
   }
   async function loadInitialAssets(){
-    try{const assets=await readAssetSet();if(assets){await applyAssetSet(assets);setSettingsMessage(`Using saved files: ${assets.saveName}, ${assets.schemaName}, and ${assets.dbName}.`);return;}}
+    try{const assets=await readAssetSet();if(assets){if(assets.kind==='career-import'||assets.kind==='player-export'){await applyRememberedImport(assets);setSettingsMessage(`Restored ${assets.fileName||assets.saveName||'your imported data'} from this browser.`);}else{await applyAssetSet(assets);setSettingsMessage(`Using saved files: ${assets.saveName}, ${assets.schemaName}, and ${assets.dbName}.`);}return;}}
     catch(error){if(error?.name!=='NotFoundError')setSettingsMessage(`${error.message} Using the bundled files instead.`,true);}
     await loadBundledSave();
   }
@@ -362,7 +385,7 @@
     finally{$('saveSettingsBtn').disabled=false;}
   });
   $('restoreBundledBtn').addEventListener('click',async()=>{
-    try{await clearAssetSet();userStartedImport=false;bundledSaveBuffer=null;bundledSchemaText=null;bundledNameLookup=new Map();activeSaveName=bundledSaveName;['settingsSaveFile','settingsSchemaFile','settingsDbFile'].forEach(id=>$(id).value='');displaySavedAssetNames(null);await loadBundledSave();setSettingsMessage('Bundled career save, schema, and reference database restored.');}
+    try{await clearAssetSet();userStartedImport=false;bundledSaveBuffer=null;bundledSchemaText=null;bundledNameLookup=new Map();activeDatabaseBuffer=null;activeDatabaseName='';activeSchemaName='fifa_ng_db-meta.xml';activeSaveName=bundledSaveName;['settingsSaveFile','settingsSchemaFile','settingsDbFile'].forEach(id=>$(id).value='');displaySavedAssetNames(null);await loadBundledSave();setSettingsMessage('Bundled career save, schema, and reference database restored.');}
     catch(error){setSettingsMessage(error.message||'Could not restore bundled files.',true);}
   });
   let commandSelection=0;
@@ -392,15 +415,42 @@
       const referenceFile=files.find(f=>/fifa_ng_db\.db$/i.test(f.name));
       const dataFile=files.find(f=>['csv','json'].includes(f.name.split('.').pop().toLowerCase()));
       if(!save){for(const candidate of files){if(candidate===xml||candidate===dataFile||candidate===referenceFile)continue;const head=new Uint8Array(await candidate.slice(0,8).arrayBuffer());if(head.length===8&&head[0]===68&&head[1]===66&&head[2]===0&&head[3]===8){save=candidate;break;}}}
-      const schemaText=xml?await xml.text():null;
-      if(!save&&referenceFile&&bundledSaveBuffer){const schema=schemaText||bundledSchemaText;if(!schema)throw new Error('The active schema has not finished loading yet. Try again in a moment.');const lookup=parseCareerSave(await referenceFile.arrayBuffer(),schema,referenceFile.name).nameLookup;const rows=parseCareerSave(bundledSaveBuffer,schema,activeSaveName,lookup);loadRows(rows,activeSaveName);$('footerInfo').textContent=lookup.size?'Player names resolved using the FIFA database':'The selected database has no readable playernames table';if(!lookup.size)setNotice('Player names remain IDs. Use fifa_ng_db.db from the same FIFA 14 installation as the save.');return;}
-      if(!save&&xml&&bundledSaveBuffer){const rows=parseCareerSave(bundledSaveBuffer,schemaText,activeSaveName,bundledNameLookup);loadRows(rows,activeSaveName);$('footerInfo').textContent='Player names resolved from the bundled FIFA database';return;}
-      if(save){if(!xml)throw new Error('A raw career save needs its matching fifa_ng_db-meta.xml schema. Select both together. To resolve player names too, include fifa_ng_db.db.');let lookup=new Map(bundledNameLookup);if(referenceFile)lookup=parseCareerSave(await referenceFile.arrayBuffer(),schemaText,referenceFile.name).nameLookup;const rows=parseCareerSave(await save.arrayBuffer(),schemaText,save.name,lookup);loadRows(rows,save.name);$('footerInfo').textContent=lookup.size?'Player names resolved using the FIFA database':'Names still appear as IDs; include fifa_ng_db.db to resolve them';if(!lookup.size)setNotice('Player names remain IDs. Choose fifa_ng_db.db from the same FIFA 14 installation as the save to load the name lookup table.');return;}
-      if(xml)throw new Error('The XML is schema only. It has been applied to the active career save; select fifa_ng_db.db as well if you want to resolve player names.');
-      if(!dataFile)throw new Error('Choose a CSV or JSON player export.');
-      const text=await dataFile.text(),ext=dataFile.name.split('.').pop().toLowerCase();let parsed;if(ext==='csv')parsed=parseCSV(text);else{parsed=JSON.parse(text);if(!Array.isArray(parsed))parsed=parsed.players||parsed.data||parsed.records;}loadRows(parsed,dataFile.name);
+      if(!save&&!xml&&!referenceFile&&dataFile){const format=dataFile.name.split('.').pop().toLowerCase(),content=await dataFile.text(),rows=parsePlayerExport(content,format);loadRows(rows,dataFile.name);await rememberSuccessfulImport({kind:'player-export',format,content,fileName:dataFile.name});$('footerInfo').textContent=`${rows.length.toLocaleString()} players from ${dataFile.name} · saved in this browser`;return;}
+      const schemaText=xml?await xml.text():bundledSchemaText;
+      const schemaName=xml?.name||activeSchemaName;
+      const dbBuffer=referenceFile?await referenceFile.arrayBuffer():activeDatabaseBuffer;
+      const dbName=referenceFile?.name||activeDatabaseName;
+      if(!save&&referenceFile){
+        if(!bundledSaveBuffer)throw new Error('No career save is loaded yet. Try again after the bundled save finishes loading.');
+        if(!schemaText)throw new Error('The active schema has not finished loading yet. Try again in a moment.');
+        const lookup=parseCareerSave(dbBuffer,schemaText,referenceFile.name).nameLookup,rows=parseCareerSave(bundledSaveBuffer,schemaText,activeSaveName,lookup);
+        bundledNameLookup=lookup;activeDatabaseBuffer=dbBuffer;activeDatabaseName=dbName;activeSchemaName=schemaName;loadRows(rows,activeSaveName);
+        $('footerInfo').textContent=`${lookup.size?'Player names resolved using the FIFA database':'The selected database has no readable playernames table'} · ${activeSaveName}`;if(!lookup.size)setNotice('Player names remain IDs. Use fifa_ng_db.db from the same FIFA 14 installation as the save.');
+        await rememberCareerImport(bundledSaveBuffer,activeSaveName,schemaText,schemaName,dbBuffer,dbName);return;
+      }
+      if(!save&&xml){
+        if(!bundledSaveBuffer)throw new Error('No career save is loaded yet. Try again after the bundled save finishes loading.');
+        if(!schemaText)throw new Error('The selected XML schema could not be read.');
+        const lookup=dbBuffer?parseCareerSave(dbBuffer,schemaText,dbName||'FIFA reference database').nameLookup:bundledNameLookup;
+        const rows=parseCareerSave(bundledSaveBuffer,schemaText,activeSaveName,lookup);
+        bundledSchemaText=schemaText;activeSchemaName=schemaName;bundledNameLookup=lookup;activeDatabaseBuffer=dbBuffer||null;activeDatabaseName=dbName;loadRows(rows,activeSaveName);
+        $('footerInfo').textContent=`${lookup.size?'Player names resolved using the FIFA database':'The selected XML schema was applied to the active save'} · ${activeSaveName}`;
+        await rememberCareerImport(bundledSaveBuffer,activeSaveName,schemaText,schemaName,dbBuffer,dbName);return;
+      }
+      if(save){
+        if(!xml)throw new Error('A raw career save needs its matching fifa_ng_db-meta.xml schema. Select both together. To resolve player names too, include fifa_ng_db.db.');
+        if(!schemaText)throw new Error('The selected XML schema could not be read.');
+        const lookup=dbBuffer?parseCareerSave(dbBuffer,schemaText,dbName||'FIFA reference database').nameLookup:bundledNameLookup;
+        const saveBuffer=await save.arrayBuffer(),rows=parseCareerSave(saveBuffer,schemaText,save.name,lookup);
+        bundledSaveBuffer=saveBuffer;bundledSchemaText=schemaText;activeSchemaName=schemaName;bundledNameLookup=lookup;activeDatabaseBuffer=dbBuffer||null;activeDatabaseName=dbName;activeSaveName=save.name;loadRows(rows,save.name);
+        $('footerInfo').textContent=`${lookup.size?'Player names resolved using the FIFA database':'Names still appear as IDs; include fifa_ng_db.db to resolve them'} · ${save.name}`;if(!lookup.size)setNotice('Player names remain IDs. Choose fifa_ng_db.db from the same FIFA 14 installation as the save to load the name lookup table.');
+        await rememberCareerImport(saveBuffer,save.name,schemaText,schemaName,dbBuffer,dbName);return;
+      }
+      if(!dataFile)throw new Error('Choose a career save with its XML schema, a FIFA reference database, or a CSV/JSON player export.');
+      const format=dataFile.name.split('.').pop().toLowerCase(),content=await dataFile.text(),rows=parsePlayerExport(content,format);loadRows(rows,dataFile.name);
+      await rememberSuccessfulImport({kind:'player-export',format,content,fileName:dataFile.name});$('footerInfo').textContent=`${rows.length.toLocaleString()} players from ${dataFile.name} · saved in this browser`;
     }catch(err){setNotice(err.message,'error');}
-    e.target.value='';
+    finally{e.target.value='';}
   });
   ['search','positionFilter','clubFilter','ratingFilter','potentialFilter','growthFilter','ageFilter'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',()=>{state.limit=100;draw();}));
   document.querySelectorAll('[data-quick]').forEach(button=>button.addEventListener('click',()=>{switchView('scout');state.quick=button.dataset.quick;state.limit=100;const hints={'all':'Full player pool','high-upside':'85+ potential · 8+ development ceiling','hidden-gems':'Under 75 overall · 10+ upside','wonderkids':'Under 23 · 80+ potential · 8+ upside','ready-now':'Established players rated 80+','free-agents':'Unassigned players','shortlist':'Your saved transfer targets'};$('presetHint').textContent=hints[state.quick]||'Pick a profile to narrow the market';draw();}));
@@ -417,8 +467,9 @@
       const [saveResponse,xmlResponse,dbResponse]=await Promise.all([fetch(encodeURIComponent(saveName)),fetch('fifa_ng_db-meta.xml'),fetch('fifa_ng_db.db')]);
       if(!saveResponse.ok||!xmlResponse.ok||!dbResponse.ok||userStartedImport) return;
       bundledSaveBuffer=await saveResponse.arrayBuffer();
-      bundledSchemaText=await xmlResponse.text();
-      const nameReference=parseCareerSave(await dbResponse.arrayBuffer(),bundledSchemaText,'fifa_ng_db.db');
+      bundledSchemaText=await xmlResponse.text();activeSchemaName='fifa_ng_db-meta.xml';
+      activeDatabaseBuffer=await dbResponse.arrayBuffer();activeDatabaseName='fifa_ng_db.db';
+      const nameReference=parseCareerSave(activeDatabaseBuffer,bundledSchemaText,activeDatabaseName);
       bundledNameLookup=nameReference.nameLookup;
       const rows=parseCareerSave(bundledSaveBuffer,bundledSchemaText,saveName,bundledNameLookup);
       loadRows(rows,saveName);

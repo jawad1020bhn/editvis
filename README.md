@@ -22,6 +22,8 @@ Open **Settings** in the header to install a complete FIFA save data set. Select
 
 ## Import data
 
+Files successfully loaded through the main **Import Data** picker are also saved in browser IndexedDB and restored automatically on the next visit. This includes CSV/JSON exports and career saves with their selected schema/reference database. Choose **Restore bundled files** in Settings to clear the saved import and return to the included FIFA 14 data.
+
 - **CSV:** first row should contain column headers. Common header names such as `player_name`, `overallrating`, `potential`, `position`, `club`, and `age` are recognized.
 - **JSON:** accepts an array of player objects, or an object containing a `players`, `data`, or `records` array.
 - The bundled career save loads with its matching `fifa_ng_db-meta.xml` schema and `fifa_ng_db.db` name lookup, all included here.
