@@ -203,6 +203,7 @@
     draw();
   }
   function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  const isFreeAgent=player=>/^(?:free[\s_-]*agents?|unassigned)$/i.test(String(player.club||'').trim());
   function filtered(){
     const query=$('search').value.trim().toLowerCase(),pos=$('positionFilter').value,club=$('clubFilter').value,minOvr=Number($('ratingFilter').value),minPot=Number($('potentialFilter').value),minGrowth=Number($('growthFilter').value),ageBand=$('ageFilter').value;
     return state.players.filter(p=>{
@@ -220,7 +221,7 @@
       if(state.quick==='value-picks'&&!(p.value!==null&&p.value<=5000000))return false;
       if(state.quick==='ready-now'&&!(p.overall>=80))return false;
       if(state.quick==='shortlist'&&!state.shortlist.has(p.id))return false;
-      if(state.quick==='free-agents'&&p.club!=='Unassigned')return false;
+      if(state.quick==='free-agents'&&!isFreeAgent(p))return false;
       if(state.quick==='priority'&&state.priorities.get(p.id)!=='Priority')return false;
       if(state.quick==='monitor'&&state.priorities.get(p.id)!=='Monitor')return false;
       return true;
