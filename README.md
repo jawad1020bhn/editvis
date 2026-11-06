@@ -26,6 +26,7 @@ Files successfully loaded through the main **Import Data** picker are also saved
 
 - **CSV:** first row should contain column headers. Common header names such as `player_name`, `overallrating`, `potential`, `position`, `club`, and `age` are recognized.
 - **JSON:** accepts an array of player objects, or an object containing a `players`, `data`, or `records` array.
+- Career saves show contract years remaining by comparing `contractvaliduntil` with the save's current career year; the contract filter offers expiry ranges, and the table shows each player's remaining term. CSV/JSON exports can provide `contract_years_left` directly.
 - The bundled career save loads with its matching `fifa_ng_db-meta.xml` schema and `fifa_ng_db.db` name lookup, all included here.
 - **Other raw FIFA career saves:** select the save and its matching schema together. Add the matching base-game `fifa_ng_db.db` (usually under `Game/data/db`) to resolve names. The schema and database must match the game release.
 - CSV/JSON exports with names are also supported. The explorer only displays player records; it does not modify or write back to the career save.
